@@ -156,6 +156,48 @@ module Protobuf
 
           @protobuf_message
         end
+
+        class Value
+          def serialize(value)
+            value
+          end
+
+          def nil?; false; end
+        end
+
+        class Date < Value
+          def serialize(value)
+            return nil if value.nil?
+            value.to_time(:utc).to_i
+          end
+        end
+
+        class DateTime < Value
+          def serialize(value)
+            return nil if value.nil?
+            value.to_i
+          end
+        end
+
+        class Nil < Value
+          def serialize(_value)
+            nil
+          end
+
+          def nil?; true; end
+        end
+
+        def _cached_serialization_class_for_field(field)
+          @serialization_cache ||= {}
+          @serialization_cache[field] ||= begin
+                                            case
+                                            when !respond_to?(field) then Nil.new
+                                            when _protobuf_date_column?(field) then Date.new
+                                            when _protobuf_date_datetime_time_or_timestamp_column?(field) then DateTime.new
+                                            else Value.new
+                                            end
+                                          end
+        end
       end
 
       # :nodoc:
@@ -220,18 +262,23 @@ module Protobuf
         # in terms of optimization (`while` is slightly faster as no block carried through)
         while attribute_number < limit
           field = field_attributes[attribute_number]
+
           hash[field] = case
                         when _protobuf_field_symbol_transformers.has_key?(field) then
                           self.class.__send__(_protobuf_field_symbol_transformers[field], self)
                         when _protobuf_field_transformers.has_key?(field) then
                           _protobuf_field_transformers[field].call(self)
-                        when self.class._protobuf_instance_respond_to_from_cache?(field) then
-                          _protobuf_convert_attributes_to_fields(field, __send__(field))
-                        when respond_to?(field) then
-                          self.class._protobuf_respond_to_cache << field
-                          _protobuf_convert_attributes_to_fields(field, __send__(field))
+                        # when self.class._protobuf_instance_respond_to_from_cache?(field) then
+                        #   _protobuf_convert_attributes_to_fields(field, __send__(field))
                         else
-                          nil
+                        #   self.class._protobuf_respond_to_cache << field
+                        #   _protobuf_convert_attributes_to_fields(field, __send__(field))
+                          serialization_class = self.class._cached_serialization_class_for_field(field)
+                          if serialization_class.nil?
+                            nil
+                          else
+                            serialization_class.serialize(__send__(field))
+                          end
                         end
 
           attribute_number += 1
